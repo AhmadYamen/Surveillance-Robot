@@ -1,6 +1,6 @@
-### Surveillance Robot
+# Surveillance Robot
 
 ## Training App
 
-# Install requirements first
+### Install requirements first
 'pip install -r requirements.txt'
