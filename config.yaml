@@ -1,0 +1,21 @@
+camera:
+  CAM_INDEX: 1
+  CAM_ORIENTATION: -1
+  CAM_WIDTH: 720
+  CAM_HEIGHT: 480
+
+remote_camera:
+  credentials:
+    USERNAME: vanier
+    PASSWORD: 5128
+  domain:
+    PROTOCOL: http
+    PORT: 81
+    IP:
+      SEG_A: 192.168
+      SEG_B: 63
+      SEG_C: 159
+  stream:
+    PATH: stream
+  
+
