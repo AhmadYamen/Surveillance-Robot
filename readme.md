@@ -24,3 +24,14 @@
 
     # Install dependencies
     pip install -r requirements.txt
+```
+## Usage
+```bash
+   # Extract Images Embeddings by running the following script
+   # After labelling the extracted embeddings, export them
+   python training_app.py
+
+   # Write the following line to run the Recognition Engine
+   # Notice you have to change the CAM_INDEX in config.yaml to (0 or 1) according to your attached camera
+   python reco_engine.py
+   
