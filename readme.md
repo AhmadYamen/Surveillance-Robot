@@ -11,7 +11,8 @@
 - pip
 
 ### Setup
-'''bash
+''' 
+    bash
     # Clone the repository 
     git clone https://github.com/AhmadYamen/Surveillance-Robot.git
 
@@ -25,5 +26,5 @@
     # Install dependencies
     pip install -r requirements.txt
 
-    
+
 
