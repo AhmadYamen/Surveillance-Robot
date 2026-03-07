@@ -102,9 +102,15 @@ class Engine(EngineConfiguration):
 
     def _recognize(self):
         """
-            Recognition Thread
+            Recognition Thread:
+                used to recognize entities in a sequence of frames captured
+                whether from a local camera or a remote one.
         """
+
         while self.running:
+            ## While self.running is true or the app is running
+            # if a frame is not captured or no faces were found, then sleep a little and then continue without
+            # blocking the main thread
             if self.latest_frame is None or len(self.latest_faces) == 0:
                 time.sleep(0.1)
                 continue
@@ -113,29 +119,38 @@ class Engine(EngineConfiguration):
             snap_frame = self.latest_frame.copy()
             snap_faces = self.latest_faces
             
-            # Heavy calculation
+            # Heavy Calculation, where it must detect faces and get their embeddings 
             results = self.face_engine.getFaceEmbeddings(snap_frame, snap_faces)
-        
+
+            # If there are faces
             if results:
                 new_labels = {}
+                # for each face captured and embedded
                 for face in results:
-                    u_embed = face['embedding']
-                    bbox = tuple(face['bbox'])
+                    u_embed = face['embedding'] # get and store
+                    bbox = tuple(face['bbox']) # get and store the face coordinates
                     x, y, w, h = bbox
 
-                    # Normalizing Embeddings for unknown face
+                    # Normalizing Embeddings for unknown face for easier calculation and prevent outliers
                     u_norm = u_embed / (np.linalg.norm(u_embed) + 1e-7)
                     
+                    # the best matching between faces
                     best_sim = 0
+
                     ## need to be fixed
                     if not self.embeddings:
                         name = ''
 
+                    # for each embedding in the stored embeddings
                     for idx, s_embed in enumerate(self.embeddings):
                         s_norm = s_embed / (np.linalg.norm(s_embed) + 1e-7) # Normalizing Embeddings for known faces
                         sim = 1 - cosine(u_norm, s_norm) # Calculate Similarity using cosine
+
+                        # If there is a better match, keep calculating 
                         if sim > best_sim:
                             best_sim = sim
+
+                            # If similarity was high
                             if sim > 0.7:
                                 name = 'Recognized'
                                 if self.labels[idx] not in self.discovered:
@@ -161,6 +176,7 @@ class Engine(EngineConfiguration):
             Display Thread
         """
 
+        # While the engine is running
         while self.running:
             # If there is no frame captured, then skip
             if self.latest_frame is None:
@@ -169,6 +185,7 @@ class Engine(EngineConfiguration):
 
             frame = self.latest_frame.copy()
             
+            # for each face coordinates, then draw a rect around the face
             for (x, y, w, h) in self.latest_faces:
                 cv.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
                 name = self.face_labels.get((x, y, w, h), "...")
@@ -240,4 +257,4 @@ class Engine(EngineConfiguration):
         cv.destroyAllWindows()
 
 if __name__ == '__main__':
-    Engine().main()
+    Engine().main(c_flag = ('l', ))
