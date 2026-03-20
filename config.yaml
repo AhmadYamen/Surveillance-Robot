@@ -6,16 +6,16 @@ camera:
 
 remote_camera:
   credentials:
-    USERNAME: vanier
-    PASSWORD: 5128
+    USERNAME: 
+    PASSWORD: 
   domain:
     PROTOCOL: http
-    PORT: 81
+    PORT: 80
     IP:
       SEG_A: 192.168
-      SEG_B: 63
+      SEG_B: 105
       SEG_C: 159
   stream:
-    PATH: stream
+    PATH: videostream
   
 

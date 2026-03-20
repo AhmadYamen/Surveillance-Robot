@@ -67,7 +67,11 @@ class FaceExtractorEngine:
 
 	def getFaceEmbeddings(self, image: str | np.ndarray, faces: list = None):
 		"""
-			Get Embeddings for all faces in an image
+			Get Embeddings for all faces in an image.\n
+			Return:\n
+				bbox : (x, y, w, h)
+				embedding : embedding
+				face_image : face cropped
 		"""
 		if not type(image) == np.ndarray:
 			image = cv.imread(image)

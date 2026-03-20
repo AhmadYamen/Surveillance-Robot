@@ -54,6 +54,26 @@ class TrainingApp:
         
         return self.progress_window
 
+    def _crop_face(self, image):
+        """
+            Detects and crops the face from a BGR image.
+        """
+        gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+        faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
+        
+        if len(faces) == 0:
+            return None  # No face detected
+            
+        # Get the largest face found
+        (x, y, w, h) = max(faces, key=lambda f: f[2] * f[3])
+        
+        # Optional: Add a 10% margin
+        margin = int(w * 0.1)
+        y1, y2 = max(0, y - margin), min(image.shape[0], y + h + margin)
+        x1, x2 = max(0, x - margin), min(image.shape[1], x + w + margin)
+        
+        return image[y1:y2, x1:x2]
+
     def _update_progress(self, value: float):
         if self.progress_window:
             self.progress_bar.set(value)
@@ -77,34 +97,10 @@ class TrainingApp:
         train_thread = threading.Thread(target=self._train_embeddings_thread)
         train_thread.daemon = True
         train_thread.start()
-
-    """ def _crop_faces_save(self, label, images):
-        construct_path = os.path.join(self.images_folder_cropped, label)
-        if not os.path.exists(self.images_folder_cropped):
-            os.mkdir(self.images_folder_cropped)
-
-        if not os.path.exists(construct_path):
-            os.mkdir(construct_path)
-        else:
-            return
-        
-        for index, img in enumerate(images):
-            read_image = cv.imread(img)
-            
-            if os.path.exists(os.path.join(construct_path, f'{label}_{index}_cropped.jph')):
-                return
-            
-            face = self.face_cascade.detectMultiScale(read_image)[0]
-            read_image_cropped = cut_face(read_image, face)
-            cv.imwrite(os.path.join(construct_path, f'{label}_{index}_cropped.jpg'), read_image_cropped)
-
-        return [os.path.join(construct_path, f'{label}_{index}_cropped.jpg') for index, _ in enumerate(images)]
-    """
     
     def _train_embeddings_thread(self):
         for label, images in self.data_gathered.items():
             try:
-                #cropped_images_path = self._crop_faces_save(label, images)
                 best_embed = self._calculate_encodings_best(images)
                 self.embeddings.append(best_embed)
                 self.labels.append(label)
@@ -123,35 +119,34 @@ class TrainingApp:
 
     def _export_data_base_embeddings(self):
         try:
-            if not (self.embeddings.shape[0] > 0 or self.labels):
-                msg.showerror('Export Failed', 'Error!\nNo data were found\nLabel Images first', icon=msg.ERROR)
-                return
-        except:
-            pass
-        
-        try:
-            self.embeddings = self.loaded_embeddings + self.embeddings
+            # FIX: Create a dictionary to map labels to embeddings to easily overwrite duplicates
+            final_data_map = {}
+            
+            # Load existing
+            for label, embed in zip(self.loaded_labels, self.loaded_embeddings):
+                final_data_map[label] = embed
+                
+            # Overwrite/Add new
+            for label, embed in zip(self.labels, self.embeddings):
+                final_data_map[label] = embed
 
-            self.labels = self.loaded_labels + self.labels
+            # Extract back to lists
+            final_labels = list(final_data_map.keys())
+            final_embeddings = list(final_data_map.values())
 
-            if os.path.exists('dataset.json'):
-                with open('dataset.json', 'r') as dataset_file:
-                    data = json.load(dataset_file)
-                    data['Label'] = self.labels
-                    data['Embedding'] = [np.array2string(embed) for embed in self.embeddings]
+            data = {
+                'Label': final_labels,
+                'Embedding': [embed.tolist() for embed in final_embeddings]
+            }
 
-                with open('dataset.json', 'w') as dataset_file:
-                    json.dump(data, dataset_file)
+            with open('dataset.json', 'w') as dataset_file:
+                json.dump(data, dataset_file, indent=2)
+
+            msg.showinfo('Success', 'Data Exported Successfully', icon=msg.INFO)
 
         except Exception as e:
-            print(f'Error Occured When Exporting: {e}')
-        
-        msg.showinfo('Success', 'Data Exported Successfully', icon = msg.INFO)
-            
-        #database_embeddings = pd.DataFrame({'Label': self.labels})
-        #for i in range(embeddings_array.shape[1]):
-        #    database_embeddings[f'embedding_{i}'] = embeddings_array[:, i]
-        #database_embeddings.to_csv('labels.csv', index=False)
+            print(f'Error Occurred When Exporting: {e}')
+            msg.showerror('Export Failed', str(e), icon=msg.ERROR)
         
     def _clear_all(self):
         flag_to_approve = msg.askyesnocancel('Are you Sure?', 'This procedure will delete everything', icon = msg.QUESTION)
@@ -199,12 +194,20 @@ class TrainingApp:
          
         if embeddings is not None:
             embeddings = np.array(embeddings)
-            return geometric_median(embeddings)
+            median = geometric_median(embeddings)
+            # Normalize before returning
+            return median / (np.linalg.norm(median) + 1e-7)
         
         embeddings_per_label = []
         for img_path in images:
             try:
-                single_img_embedding = self.model.extractEmbedding(cv.imread(img_path))
+                img = cv.imread(img_path)
+                if img is None: 
+                    continue
+                face_img = self._crop_face(img)
+                target_img = face_img if face_img is not None else img
+                
+                single_img_embedding = self.model.extractEmbedding(target_img)
                 embeddings_per_label.append(single_img_embedding)
             except Exception as e:
                 print(f"Error embedding image {img_path}: {e}")
@@ -214,39 +217,56 @@ class TrainingApp:
             raise ValueError(f"No valid embeddings for images")
         
         embeddings_per_label = np.array(embeddings_per_label)
+        median = geometric_median(embeddings_per_label)
         
-        return geometric_median(embeddings_per_label)
+        # Normalize before returning
+        return median / (np.linalg.norm(median) + 1e-7)
     
     def _load_data(self):
         if os.path.exists('dataset.json'):
             with open('dataset.json', 'r') as dataset_file:
                 data = json.load(dataset_file)
-                self.loaded_embeddings = [np.fromstring(embed.strip('[]'), sep = ' ') for embed in data['Embedding']]
-                self.loaded_labels = data['Label']
-            return
-        with open('dataset.json', 'w') as dataset_file:
-            data = dict()
-            data['Label'] = []
-            data['Embedding'] = []
-            data['Tag'] = []
-            json.dump(data, dataset_file)
+                # Convert lists back to numpy arrays
+                if 'Embedding' in data and 'Label' in data:
+                    self.loaded_embeddings = [np.array(embed_list, dtype=np.float32) for embed_list in data['Embedding']]
+                    self.loaded_labels = data['Label']
+                else:
+                    # Create empty structure if keys don't exist
+                    self.loaded_embeddings = []
+                    self.loaded_labels = []
+        else:
+            # Create new file with empty structure
+            with open('dataset.json', 'w') as dataset_file:
+                data = {
+                    'Label': [],
+                    'Embedding': [],
+                    'Tag': []
+                }
+                json.dump(data, dataset_file)
+            self.loaded_embeddings = []
+            self.loaded_labels = []
 
     def _re_train(self):
+        # Create a copy of loaded embeddings to modify
+        updated_embeddings = self.loaded_embeddings.copy()
+        updated_labels = self.loaded_labels.copy()
+        
         ## read labels from loaded stored data
         for idx, loaded_label in enumerate(self.loaded_labels):
             ## read labels from entered data
             for label in list(self.data_gathered.keys()):
                 if label == loaded_label:
-                    data_table = {}
-                    data_table['label'] = label
-                    data_table['index'] = idx
-
                     new_retrained_embeddings = self._calculate_encodings_best(self.data_gathered[label])
-                    self.loaded_embeddings[idx] = self._calculate_encodings_best(embeddings = [new_retrained_embeddings, self.loaded_embeddings[idx]])
+                    # Combine old and new embeddings
+                    combined = np.array([new_retrained_embeddings, self.loaded_embeddings[idx]])
+                    updated_embeddings[idx] = self._calculate_encodings_best(embeddings=combined)
+        
+        # Update the loaded embeddings with the retrained ones
+        self.loaded_embeddings = updated_embeddings
         
         self.window.after(0, lambda: msg.showinfo(
-            "Training Complete", 
-            f"Successfully processed {len(self.labels)} labels"
+            "Retraining Complete", 
+            f"Successfully retrained {len(self.loaded_labels)} labels"
         ))
 
     def build_app(self, window_root: ctk.CTk):
@@ -431,7 +451,7 @@ class TrainingApp:
 
         train_embeddings = ctk.CTkButton(
             right_lower_frame, 
-            text = 'Detect', 
+            text = 'Train', 
             fg_color = 'green', 
             font=('Arial', 14), 
             hover_color='#2ed146',
@@ -460,33 +480,51 @@ class TrainingApp:
         clear_all.grid(row = 0, column = 2, padx = 5, pady = 5)
 
     def _label_func(self):
-        self.folders_textbox.configure(state = 'normal')
+        self.folders_textbox.configure(state='normal')
         if self.label_entry.get() and self.images:
             try:
-                label_entry_flag = self.label_entry.get()
-                if label_entry_flag in list(self.data_gathered.keys()):
-                    msg.showerror('Exist', 'The Label Name already Taken\nChoose another', icon = msg.ERROR)
+                label_entry_flag = self.label_entry.get().strip()
+                
+                if label_entry_flag in self.data_gathered:
+                    msg.showerror('Exist', 'The Label Name is already in the current queue\nChoose another', icon=msg.ERROR)
                     return
 
                 if label_entry_flag in self.loaded_labels:
-                    answer_flag = msg.askyesno('Re-Train', 'Do you want to retrain the model with new info', icon = msg.WARNING)
+                    answer_flag = msg.askyesno('Re-Train', f'"{label_entry_flag}" exists in database. Add to retrain queue?', icon=msg.WARNING)
                     if not answer_flag:
-                        msg.showerror('Exist', 'The Label Name already Taken\nChoose another', icon = msg.ERROR)
                         return
-                    
-                if label_entry_flag.isalpha() or ' ' in label_entry_flag:
+                
+                # FIX: Check if string is alphabetical excluding spaces
+                if label_entry_flag.replace(' ', '').isalpha():
                     self.folders_textbox.delete('1.0', 'end')
-                    self.folders_textbox.configure(state = 'normal')
                     self.data_gathered[label_entry_flag] = self.images
                     self.label_entry_variable.set('')
                     self.images = []
+                    msg.showinfo('Success', 'Images were labeled successfully', icon=msg.INFO)
                 else:
                     raise ValueError
             except ValueError:
-                msg.showerror('Error', 'only Include Alphabetical Labels', icon = msg.ERROR)
-                return
-            msg.showinfo('Success', 'Images were labeled successfully', icon = msg.INFO)
-         
+                msg.showerror('Error', 'Only include alphabetical labels', icon=msg.ERROR)
+        self.folders_textbox.configure(state='disabled')
+
+    def _clear_all(self):
+        flag_to_approve = msg.askyesnocancel('Are you Sure?', 'This procedure will delete everything in the current session', icon=msg.QUESTION)
+        if flag_to_approve:
+            try:
+                self.data_gathered.clear()
+                self.images.clear()
+                self.labels.clear()
+                self.embeddings.clear()
+                self.images_folders.clear()
+                
+                self.folders_textbox.configure(state='normal')
+                self.folders_textbox.delete('1.0', 'end')
+                self.folders_textbox.configure(state='disabled')
+                
+                msg.showinfo('Success', 'Data was deleted successfully')
+            except Exception as e:
+                msg.showerror('Error', f'An Error Occurred: {e}', icon=msg.ERROR)
+                
     def _browse_images(self):
         images_browsed = tfl.askopenfilenames()
         filtered_images_browsed = []
