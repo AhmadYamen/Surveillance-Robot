@@ -529,7 +529,7 @@ class TrainingApp:
         images_browsed = tfl.askopenfilenames()
         filtered_images_browsed = []
         for img in images_browsed:
-            if img.endswith(('.jpg', '.png')):
+            if img.endswith(('.jpg', '.png', '.jpeg')):
                 filtered_images_browsed.append(img)
         self.images = filtered_images_browsed
 
