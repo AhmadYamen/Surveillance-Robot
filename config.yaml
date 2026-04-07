@@ -10,6 +10,7 @@ remote_camera:
     PASSWORD: 
   domain:
     PROTOCOL: http
+    mDNS: esp-into.local
     PORT: 80
     IP:
       SEG_A: 192.168

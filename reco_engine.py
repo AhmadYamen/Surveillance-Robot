@@ -5,12 +5,73 @@ import dataclasses
 import os
 import json
 import threading
-import embedding_engine as eng
-import yaml
+import struct
 
+import yaml
+import socket as stc
+
+from collections import deque
 from typing import List, Optional, Tuple
 from scipy.spatial.distance import cosine
+from zeroconf import Zeroconf, ServiceInfo
 
+# Import your face embedding engine
+try:
+    import embedding_engine as eng
+except ImportError:
+    print("Warning: embedding_engine not found, face recognition disabled")
+    eng = None
+
+class SocketInterface:
+    def __init__(self, service_name, service_type, domain,port):
+        self.service_name = service_name
+        self.service_type = service_type
+        self.domain = domain
+        self.full_path = self.service_name + '.' + self.service_type + self.domain
+        self.port = port
+        self.host_ip = None
+
+        self._get_local_ip()
+    
+    def _get_local_ip(self):
+        broad_cast_socket = stc.socket(stc.AF_INET, stc.SOCK_DGRAM)
+        ip = '127.0.0.1'
+        try:
+            broad_cast_socket.connect(('8.8.8.8', 80))
+            ip = broad_cast_socket.getsockname()[0]
+        except Exception:
+            pass
+        finally:
+            self.host_ip = ip
+            broad_cast_socket.close()
+
+    def advertise_mdns(self):
+        zeroconf = Zeroconf()
+
+        # Create Service Info, and register it
+        service_info = ServiceInfo(self.service_type + self.domain, self.full_path, addresses = [self.host_ip], port = self.port)
+        zeroconf.register_service(service_info)
+        try:
+            # Keep Advertising until Interrupted
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            zeroconf.unregister_service(service_info)
+            zeroconf.close()
+
+    def run_server(self):
+        self.server_socket = stc.socket(stc.AF_INET, stc.SOCK_STREAM)
+        self.server_socket.bind((self.host_ip, self.port))
+        self.server_socket.listen(5)
+        print(F"Server Listening on port: {self.port}")
+
+        while True:
+            client_sock, addr = self.server_socket.accept()
+            print(F"Connection from {addr}")
+            client_sock.send(b"ACK")
+       
 class EngineConfiguration:
     """
         Engine Configuration is a class used to load and store the important configuration for the Recognition Engine
@@ -44,10 +105,17 @@ class EngineConfiguration:
                 remote_camera_domain = remote_camera_attrs['domain']
 
                 PROTOCOL = remote_camera_domain['PROTOCOL']
+                mDNS = remote_camera_domain["mDNS"]
                 IP = f"{remote_camera_domain['IP']['SEG_A']}.{remote_camera_domain['IP']['SEG_B']}.{remote_camera_domain['IP']['SEG_C']}"
                 PORT = remote_camera_domain['PORT']
                 stream_path = remote_camera_attrs['stream']['PATH']
                 
+                try:
+                    if mDNS:
+                        IP = stc.gethostbyname(mDNS)
+                except:
+                    pass
+
                 self.streaming_url = f'{PROTOCOL}://{IP}:{PORT}/{stream_path}'
             else:
                 self._default_settings = True
@@ -213,12 +281,7 @@ class Engine(EngineConfiguration):
             'last_error': 0,
             'last_time': time.time()
         }
-        
-        # ESP32 Communication
-        self.esp32_connected = False
-        self.last_command_sent = None
-        self.last_command_time = 0
-        
+
         # Tracking parameters
         self.centering_dead_zone = 20  # Pixels tolerance for centering
         self.OPTIMAL_FACE_SIZE = 15000  # Optimal face area in pixels (w * h)
@@ -304,7 +367,7 @@ class Engine(EngineConfiguration):
                 'STOP': Stop all movement
                 'TRACK': Enable/disable tracking mode
         """
-        # Convert intensity to 0-100 range for ESP32
+        # Convert intensity to 0-100 range
         intensity_val = int(max(0, min(100, intensity * 100)))
         
         # Format command
@@ -320,12 +383,10 @@ class Engine(EngineConfiguration):
         cmd_char = cmd_map.get(command, 'S')
         cmd_str = f"{cmd_char}{intensity_val:03d}"
         
-        # In real implementation, send via serial or network
-        # Example: self.serial.write(f"{cmd_str}\n".encode())
-        
-        print(f"[ESP32] Command: {cmd_str} ({command} {intensity:.2f})")
-        self.last_command_sent = cmd_str
-        self.last_command_time = time.time()
+        returned_state = self.esp32_server_socket.send_command(command)
+        if returned_state:
+            print(f"[ESP32] Command: {cmd_str} ({command} {intensity:.2f})")
+            self.last_command_time = time.time()
         
         return True
 
@@ -777,8 +838,8 @@ class Engine(EngineConfiguration):
                                       f"Intensity: {movement_intensity:.2f}")
                                 
                                 if current_command:
-                                    self._send_to_esp32(current_command, movement_intensity)
-                                
+                                    #self._send_to_esp32(current_command, movement_intensity)
+                                    pass
                                 last_command = current_command
                                 last_command_time = current_time
                                 
@@ -797,7 +858,7 @@ class Engine(EngineConfiguration):
                             elif last_command != "SEARCHING":
                                 print("[TRACKING] No target detected, searching...")
                                 # Send search command (slow rotation)
-                                self._send_to_esp32("LEFT", 0.3)
+                                #self._send_to_esp32("LEFT", 0.3)
                                 last_command = "SEARCHING"
                                 last_command_time = time.time()
                         
@@ -909,7 +970,7 @@ class Engine(EngineConfiguration):
                 
                 if cv.waitKey(1) & 0xFF == ord('q'):
                     self.running = False
-                    self._send_to_esp32("STOP", 0.0)  # Stop robot on quit
+                    #self._send_to_esp32("STOP", 0.0)  # Stop robot on quit
                             
             except Exception as e:
                 print(f"Display Error: {e}")
@@ -923,7 +984,6 @@ class Engine(EngineConfiguration):
         try:
             url = self.streaming_url if flag == 's' else self.CAM_INDEX
             self.cap = cv.VideoCapture(url)
-            
             if not self.cap or not self.cap.isOpened():
                 print(f"Failed to open camera: {url}")
                 self.running = False
@@ -985,31 +1045,37 @@ class Engine(EngineConfiguration):
         """
         self.running = True
         c_flag = kwargs.get('c_flag', 's')
-        
+
+        server = SocketInterface('reco_service', '_http._tcp', '.local.', 5000)
+
         threads = [
             threading.Thread(target=self._run_camera, args=(c_flag,), name="Camera"),
             threading.Thread(target=self._draw_display, name="Display"),
             threading.Thread(target=self._recognize, name="Recognize"),
-            threading.Thread(target=self._process_unknown, name="Unknown")
+            threading.Thread(target=self._process_unknown, name="Unknown"),
+            threading.Thread(target=server.advertise_mdns)
         ]
         
         for t in threads:
             t.daemon = True
             t.start()
         
+        
         try:
             while self.running:
+                server.run_server()
                 time.sleep(0.5)
+
         except KeyboardInterrupt:
             print("\nShutting down...")
             self.running = False
-            self._send_to_esp32("STOP", 0.0)  # Stop robot on shutdown
+            #self._send_to_esp32("STOP", 0.0)  # Stop robot on shutdown
         
         for t in threads:
             t.join(timeout=1.0)
-        
+
         cv.destroyAllWindows()
         print("System shutdown complete")
 
 if __name__ == '__main__':
-    Engine().main(c_flag='l')
+    Engine().main(c_flag = "l")
