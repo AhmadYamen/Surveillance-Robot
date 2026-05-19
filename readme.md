@@ -34,4 +34,4 @@
    # Write the following line to run the Recognition Engine
    # Notice you have to change the CAM_INDEX in config.yaml to (0 or 1) according to your attached camera
    python reco_engine.py
-   
+   "" 
