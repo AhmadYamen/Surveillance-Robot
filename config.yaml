@@ -1,0 +1,12 @@
+camera:
+  CAM_HEIGHT: 480
+  CAM_INDEX: 0
+  CAM_ORIENTATION: -1
+  CAM_WIDTH: 720
+  remote:
+    enabled: true
+    mdns_name: "esp32-cam"
+    protocol: "http"
+    stream_path: "videostream"
+socket_server:
+  PORT: 5000
